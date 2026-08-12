@@ -227,6 +227,26 @@ public class PrayerTimeServiceImpl implements PrayerTimeService {
 
     @Override
     @Transactional(readOnly = true)
+    public MemberPrayerTimeResponse getPrayerTimesByDate(String date) {
+        LocalDate targetDate = parseDate(date);
+        log.debug("Fetching prayer times for date: {}", targetDate);
+
+        PrayerTime prayerTime = prayerTimeRepository.findByDate(targetDate)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Prayer times not found for date: " + targetDate));
+
+        MemberPrayerTimeResponse response = MemberPrayerTimeResponse.fromEntity(prayerTime);
+
+        // nextPrayer is only meaningful for the current day
+        if (targetDate.equals(LocalDate.now())) {
+            response.setNextPrayer(computeNextPrayer(prayerTime.getPrayers()));
+        }
+
+        return response;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public List<MemberPrayerTimeResponse> getWeekPrayerTimes() {
         LocalDate today = LocalDate.now();
         LocalDate weekStart = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
