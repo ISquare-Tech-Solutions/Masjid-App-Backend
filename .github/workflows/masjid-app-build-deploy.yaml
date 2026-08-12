@@ -130,11 +130,37 @@ jobs:
             # AFTER scripts/tls/setup-tls.sh has expanded the certificate to
             # cover that hostname. Switching before then makes the Infisical CLI
             # reject an untrusted certificate and every deploy fails.
-            export INFISICAL_DOMAIN=${{ secrets.INFISICAL_DOMAIN || 'http://72.62.6.65:8088' }}
-            export INFISICAL_UNIVERSAL_AUTH_CLIENT_ID=${{ secrets.INFISICAL_CLIENT_ID }}
-            export INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET=${{ secrets.INFISICAL_CLIENT_SECRET }}
+            export INFISICAL_DOMAIN="${{ secrets.INFISICAL_DOMAIN || 'http://72.62.6.65:8088' }}"
 
-            infisical run --env=dev --command="
+            # `infisical run` authenticates from INFISICAL_TOKEN and nothing
+            # else. It does NOT read INFISICAL_UNIVERSAL_AUTH_CLIENT_ID/SECRET —
+            # only `infisical login` does — so exporting those left the CLI with
+            # no credentials at all. It then fell back to an interactive browser
+            # login, which cannot work over a non-TTY SSH step, and every deploy
+            # died on "No valid login session found".
+            #
+            # Deploys passed until 2026-08-12 only because a hand-made
+            # `infisical login` session was cached on the box; they broke the
+            # first time anyone pushed after it expired. Exchanging the machine
+            # identity for a token here keeps auth in the workflow, where it can
+            # be reasoned about, instead of in an invisible file on the VPS.
+            INFISICAL_TOKEN="$(infisical login --method=universal-auth \
+              --client-id="${{ secrets.INFISICAL_CLIENT_ID }}" \
+              --client-secret="${{ secrets.INFISICAL_CLIENT_SECRET }}" \
+              --domain="$INFISICAL_DOMAIN" --silent --plain)"
+            export INFISICAL_TOKEN
+
+            # A machine identity carries no personal workspace context, so the
+            # project has to be named explicitly unless ~/masjid-app/.infisical.json
+            # supplies it. That file was created by the manual login and is not in
+            # git, so treat the secret as the durable source and the file as a
+            # fallback: set INFISICAL_PROJECT_ID and this stops depending on it.
+            PROJECT_FLAG=""
+            if [ -n "${{ secrets.INFISICAL_PROJECT_ID }}" ]; then
+              PROJECT_FLAG="--projectId=${{ secrets.INFISICAL_PROJECT_ID }}"
+            fi
+
+            infisical run $PROJECT_FLAG --env=dev --command="
               docker compose pull &&
               docker compose up -d --force-recreate --remove-orphans
             "
@@ -196,9 +222,22 @@ jobs:
             set -eu
             cd ~/masjid-app
 
-            export INFISICAL_DOMAIN=${{ secrets.INFISICAL_DOMAIN || 'http://72.62.6.65:8088' }}
-            export INFISICAL_UNIVERSAL_AUTH_CLIENT_ID=${{ secrets.INFISICAL_CLIENT_ID }}
-            export INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET=${{ secrets.INFISICAL_CLIENT_SECRET }}
+            # Same machine-identity login as the app deploy step above — see
+            # the comment there for why the client id/secret alone are not
+            # enough. Each ssh-action step is a fresh shell, so the token has to
+            # be minted again here rather than carried over.
+            export INFISICAL_DOMAIN="${{ secrets.INFISICAL_DOMAIN || 'http://72.62.6.65:8088' }}"
+
+            INFISICAL_TOKEN="$(infisical login --method=universal-auth \
+              --client-id="${{ secrets.INFISICAL_CLIENT_ID }}" \
+              --client-secret="${{ secrets.INFISICAL_CLIENT_SECRET }}" \
+              --domain="$INFISICAL_DOMAIN" --silent --plain)"
+            export INFISICAL_TOKEN
+
+            PROJECT_FLAG=""
+            if [ -n "${{ secrets.INFISICAL_PROJECT_ID }}" ]; then
+              PROJECT_FLAG="--projectId=${{ secrets.INFISICAL_PROJECT_ID }}"
+            fi
 
             # The app stack's network must exist first — the logging stack joins
             # it as external so nginx can reach Grafana by container name.
@@ -211,7 +250,7 @@ jobs:
 
             # Grafana refuses to start with an empty admin password, and a
             # blank one would otherwise be a silently world-open dashboard.
-            infisical run --env=dev --command='
+            infisical run $PROJECT_FLAG --env=dev --command='
               if [ -z "${GRAFANA_ADMIN_PASSWORD:-}" ]; then
                 echo "FAIL: GRAFANA_ADMIN_PASSWORD is not set in Infisical";
                 exit 1;
