@@ -155,10 +155,25 @@ jobs:
             # supplies it. That file was created by the manual login and is not in
             # git, so treat the secret as the durable source and the file as a
             # fallback: set INFISICAL_PROJECT_ID and this stops depending on it.
-            PROJECT_FLAG=""
-            if [ -n "${{ secrets.INFISICAL_PROJECT_ID }}" ]; then
-              PROJECT_FLAG="--projectId=${{ secrets.INFISICAL_PROJECT_ID }}"
+            PROJECT_ID="${{ secrets.INFISICAL_PROJECT_ID }}"
+            if [ -z "$PROJECT_ID" ] && [ -f .infisical.json ]; then
+              # Fallback while the secret is unset: .infisical.json is where the
+              # CLI itself keeps the project for a user session, so it is the
+              # same source of truth — just one that lives only on this box.
+              PROJECT_ID="$(grep -oE '"(workspaceId|projectId)"[[:space:]]*:[[:space:]]*"[^"]+"' .infisical.json \
+                            | head -n1 | grep -oE '"[^"]+"$' | tr -d '\"')"
+              echo "note: project id read from .infisical.json: $PROJECT_ID"
+              echo "      set the INFISICAL_PROJECT_ID repo secret to stop depending on that file."
             fi
+
+            if [ -z "$PROJECT_ID" ]; then
+              echo "FAIL: no Infisical project id. A machine identity has no workspace"
+              echo "      context, so set the INFISICAL_PROJECT_ID repo secret"
+              echo "      (Infisical > Project Settings > Project ID)."
+              exit 1
+            fi
+
+            PROJECT_FLAG="--projectId=$PROJECT_ID"
 
             infisical run $PROJECT_FLAG --env=dev --command="
               docker compose pull &&
@@ -234,10 +249,25 @@ jobs:
               --domain="$INFISICAL_DOMAIN" --silent --plain)"
             export INFISICAL_TOKEN
 
-            PROJECT_FLAG=""
-            if [ -n "${{ secrets.INFISICAL_PROJECT_ID }}" ]; then
-              PROJECT_FLAG="--projectId=${{ secrets.INFISICAL_PROJECT_ID }}"
+            PROJECT_ID="${{ secrets.INFISICAL_PROJECT_ID }}"
+            if [ -z "$PROJECT_ID" ] && [ -f .infisical.json ]; then
+              # Fallback while the secret is unset: .infisical.json is where the
+              # CLI itself keeps the project for a user session, so it is the
+              # same source of truth — just one that lives only on this box.
+              PROJECT_ID="$(grep -oE '"(workspaceId|projectId)"[[:space:]]*:[[:space:]]*"[^"]+"' .infisical.json \
+                            | head -n1 | grep -oE '"[^"]+"$' | tr -d '\"')"
+              echo "note: project id read from .infisical.json: $PROJECT_ID"
+              echo "      set the INFISICAL_PROJECT_ID repo secret to stop depending on that file."
             fi
+
+            if [ -z "$PROJECT_ID" ]; then
+              echo "FAIL: no Infisical project id. A machine identity has no workspace"
+              echo "      context, so set the INFISICAL_PROJECT_ID repo secret"
+              echo "      (Infisical > Project Settings > Project ID)."
+              exit 1
+            fi
+
+            PROJECT_FLAG="--projectId=$PROJECT_ID"
 
             # The app stack's network must exist first — the logging stack joins
             # it as external so nginx can reach Grafana by container name.
